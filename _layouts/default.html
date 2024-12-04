@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <link rel="stylesheet" href="{{ '/assets/css/style.css?v=' | append: site.github.build_revision | relative_url }}">
+    <title>{{ site.title }}</title>
+  </head>
+  <body>
+    <header class="page-header" role="banner">
+      <h1 class="project-name">{{ site.title }}</h1>
+      <div class="btn-group-flex">
+        <a href="{{ site.paper_url }}" class="btn"><img src="assets/images/icons/paper.svg" class="icon-paper"/>Paper</a>
+      </div>
+      <div class="authors">
+        <p class="authors__name">Marcelo Sanchez</p>
+      </div>
+    </header>
+
+    <main id="content" class="main-content" role="main">
+      {{ content }}
+
+      <footer class="site-footer">
+        © Crisalix {{ site.time | date: '%Y' }}
+      </footer>
+    </main>
+  </body>
+</html>
