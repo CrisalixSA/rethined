@@ -3,21 +3,21 @@ layout: default
 ---
 
 <figure align="center">
-  <img src="assets/images/WACV2023.png" width="1200" />
+  <img src="assets/images/WACV2023.png" width="1200" height="s1200" />
 
   <figcaption>Left: Inpainting result on ultra high-resolution images. Right: Comparison of LPIPS performance and Latency among different state-of-the-art methods..</figcaption>
 </figure>
 
 ## Abstract
 
-Existing image inpainting methods have shown impressive completion results for low-resolution images. However, most of these algorithms fail at high resolutions and require powerful hardware, limiting their deployment on edge devices. Motivated by this, we propose the first baseline for REal-Time High-resolution image INpainting on Edge Devices (RETHINED) that is able to inpaint at ultra-high-resolution and can run in real-time ($\leq$ 30ms) in a wide variety of mobile devices. A simple, yet effective novel method formed by a lightweight Convolutional Neural Network (CNN) to recover structure, followed by a resolution-agnostic patch replacement mechanism to provide detailed texture. Specially our pipeline leverages the structural capacity of CNN and the high-level detail of patch-based methods, which is a key component for high-resolution image inpainting. To demonstrate the real application of our method, we conduct an extensive analysis on various mobile-friendly devices and demonstrate similar inpainting performance while being $\mathrm{100 \times faster}$ than existing state-of-the-art 
+Existing image inpainting methods have shown impressive completion results for low-resolution images. However, most of these algorithms fail at high resolutions and require powerful hardware, limiting their deployment on edge devices. Motivated by this, we propose the first baseline for REal-Time High-resolution image INpainting on Edge Devices (RETHINED) that is able to inpaint at ultra-high-resolution and can run in real-time ($\leq$ 30ms) in a wide variety of mobile devices. A simple, yet effective novel method formed by a lightweight Convolutional Neural Network (CNN) to recover structure, followed by a resolution-agnostic patch replacement mechanism to provide detailed texture. Specially our pipeline leverages the structural capacity of CNN and the high-level detail of patch-based methods, which is a key component for high-resolution image inpainting. To demonstrate the real application of our method, we conduct an extensive analysis on various mobile-friendly devices and demonstrate similar inpainting performance while being 100x than existing state-of-the-art 
 methods. Furthemore,
 we realease DF8K-Inpainting, the first free-form mask UHD inpainting dataset.
 
 ## Method
 
 <figure align="center"  style="margin-top: 2em; margin-bottom: 2em">
-  <img src="assets/images/methodcvpr2023V3.png" width="450" />
+  <img src="assets/images/methodcvpr2023V3.png" width="1200" />
   <figcaption>Given a HR image and a binary mask  with corrupted pixels as inputs (left), our model first  downsamples to a lower resolution and  forwards it to the coarse model, obtaining a coarse inpainting representation. It is then refined by the NeuralPatchMatch module. Finally, our Attention Upscaling  module yields the final HR image.</figcaption>
 </figure>
 
