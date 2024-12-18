@@ -3,7 +3,7 @@ layout: default
 ---
 
 <figure align="center">
-  <img src="assets/images/WACV2023_teaser.svg" width="800" height="300" />
+  <img src="assets/images/WACV2023_teaser.svg" width="1100" height="400" />
 
   <figcaption>Left: Inpainting result on ultra high-resolution images. Right: Comparison of LPIPS performance and Latency among different state-of-the-art methods..</figcaption>
 </figure>
