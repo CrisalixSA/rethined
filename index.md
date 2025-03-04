@@ -34,14 +34,11 @@ Finally our Attention Upscaling module uses the learned attention map <b>A</b> a
 
 ## Results
 
-
 <figure align="center" style="margin-top: 2em; margin-bottom: 2em">
   <img src="assets/images/results.png" width="900" />
   <figcaption>Comparison of different inpainting methods able to work on mobile devices. Latency speed appears in parentheses and has been
 calculated on Apple M2 Ipad Pro.</figcaption>
 </figure>
-
-
 
 ## Poster
 
