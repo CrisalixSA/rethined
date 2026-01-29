@@ -21,5 +21,5 @@ dependencies = [
     "torchvision",
     "numpy",
     "einops",
-    "segmentation-models-pytorch",
+    "kornia",
 ]

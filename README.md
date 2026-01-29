@@ -1,7 +1,8 @@
 
-# RETHINED: A New Benchmark and Baseline for Real-Time High-Resolution Image Inpainting On Edge Devices
+# RETHINED: A New Benchmark and Baseline for Real-Time High-Resolution Image Inpainting On Edge Devices (WACV 2025 Oral)
 
 **[Paper](https://arxiv.org/abs/2503.14757) | [Project Page](https://crisalixsa.github.io/rethined/)**
+
 
 Marcelo Sanchez, Gil Triginer, Ignacio Sarasua, Lara Raad, Coloma Ballester
 

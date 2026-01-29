@@ -9,11 +9,13 @@ import numpy as np
 
 from torch.nn import functional as F
 
-import segmentation_models_pytorch as smp
+from kornia.filters import GaussianBlur2d
+
+from mobileone import MobileOne, mobileone
 
 
 class MultiHeadAttention(nn.Module):
-    def __init__(self, embed_dim, d_v, n_head, temperature_scaling, split, dropout, d_qk, compute_v):
+    def __init__(self, embed_dim, d_v, n_head, split, dropout, d_qk, compute_v, use_argmax=False):
         super().__init__()
         self.d_v = d_v
         self.n_head = n_head
@@ -23,8 +25,8 @@ class MultiHeadAttention(nn.Module):
         self.w_vs = nn.Linear(d_v, n_head * d_v, bias=False)
         self.fc = nn.Linear(n_head * d_v, d_v, bias=False)
         self.attention = None
-        self.temperature = temperature_scaling
         self.d_k = d_qk
+        self.use_argmax = use_argmax
     
     def forward(self, q, k, v, qpos, kpos, qk_mask=None, k_mask=None):
         d_k, d_v, n_head = self.d_k, self.d_v, self.n_head
@@ -38,12 +40,17 @@ class MultiHeadAttention(nn.Module):
 
         q, k, v = q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2)
         
-        attn = torch.matmul(q / self.temperature, k.transpose(2, 3))
+        attn = torch.matmul(q / self.d_k**0.5, k.transpose(2, 3))
 
         if qk_mask is not None:
             attn += qk_mask
         
         attn = F.softmax(attn, dim=-1)
+
+        if self.use_argmax:
+            idx =  torch.argmax(attn, dim=1, keepdims=True)
+            attn = torch.zeros_like(attn).scatter_(1, idx, 1.)
+
         attn = self.dropout(attn)
         output = torch.matmul(attn, v)
         output = output.transpose(1, 2).contiguous().view(sz_b, len_q, -1)
@@ -67,8 +74,6 @@ class PatchInpainting(nn.Module):
         stem_out_channels: int = 3,
         cross_attention: bool = False,
         mask_query_with_segmentation_mask: bool = False,
-        initial_temperature_scaling: float = 1,
-        final_temperature_scaling: float = 1,
         merge_mode: str = 'sum',
         use_kpos: bool = True,
         image_size: int = 512,
@@ -83,6 +88,7 @@ class PatchInpainting(nn.Module):
         attention_masking: bool = True,
         final_conv: bool = False,
         mask_inpainting: bool = True,
+        use_argmax: bool = False,
         model,
     ):
         self.cross_attention = cross_attention
@@ -91,22 +97,21 @@ class PatchInpainting(nn.Module):
         self.nheads = nheads
         self.use_kpos = use_kpos
         self.use_qpos = use_qpos
-        self.temperature_scaling = initial_temperature_scaling
-        self.final_temperature_scaling = final_temperature_scaling
         self.feature_i = feature_i
         self.feature_dim = feature_dim
-        print(f"PatchInpainting self.feature_dim: {self.feature_dim}")
         self.concat_features = concat_features
         self.attention_masking = attention_masking
         self.window_size= image_size // kernel_size
         self.final_conv = final_conv
         self.mask_inpainting = mask_inpainting
+        self.use_argmax = use_argmax
         super().__init__()
+        self.final_gaussian_blur = GaussianBlur2d((7,7),sigma=(2.01, 2.01),separable=False)
         self.pooling_layer = nn.MaxPool2d(
             kernel_size, stride=kernel_size)
         self.multihead_attention = MultiHeadAttention(
             embed_dim=stem_out_channels*kernel_size*kernel_size + self.feature_dim if self.concat_features else stem_out_channels*kernel_size*kernel_size, d_v=stem_out_channels*kernel_size*kernel_size, n_head=self.nheads,
-            temperature_scaling=initial_temperature_scaling, split=True, dropout=dropout, d_qk=embed_dim, compute_v=compute_v
+            split=True, dropout=dropout, d_qk=embed_dim, compute_v=compute_v, use_argmax=self.use_argmax
         )
         self.stem_out_channels = stem_out_channels
         self.stem_out_stride = stem_out_stride
@@ -172,6 +177,8 @@ class PatchInpainting(nn.Module):
         return weights
 
     def unfolding_coreml(self, feature_map: torch.Tensor, weights):
+        # im2col is not implemented in Coreml, so here we hack its implementation using conv2d
+        # we compute the weights
         batch_size, in_channels, img_h, img_w = feature_map.shape
         patches = F.conv2d(
             feature_map,
@@ -185,6 +192,8 @@ class PatchInpainting(nn.Module):
         return patches, (img_h, img_w)
 
     def folding_coreml(self, patches: torch.Tensor, output_size) -> torch.Tensor:
+        # col2im is not supported on coreml, so tracing fails
+        # We hack folding function via pixel_shuffle to enable coreml tracing
         if self.final_conv:
             patches = rearrange(patches, 'b (p1 p2) c -> b c p1 p2', p1=self.window_size, p2=self.window_size)
             patches = self.final_conv(patches)
@@ -201,8 +210,15 @@ class PatchInpainting(nn.Module):
         else:
             image = image_coarse_inpainting
         image_to_return = image_coarse_inpainting
+        
+        image_blurred = self.final_gaussian_blur(image)
+        image_as_patches_blurred, _ = self.unfolding_coreml(
+            image_blurred, self.unfolding_weights)
+
         image_as_patches, sizes = self.unfolding_coreml(
             image, self.unfolding_weights)
+        
+        image_as_patches = image_as_patches - image_as_patches_blurred
 
         pos = self.positionalencoding.repeat(
             image_as_patches.size(0), 1, 1).unsqueeze(2) if self.use_qpos else None
@@ -228,6 +244,11 @@ class PatchInpainting(nn.Module):
         out, atten_weights = self.multihead_attention(input_attn, input_attn,
             image_as_patches, qpos=pos, kpos=pos, qk_mask=qk_mask, k_mask=k_mask
         )
+
+        out = out - image_as_patches_blurred.flatten(start_dim=2).transpose(1, 2)
+
+        mask = mask_same_res_as_features_pooled.squeeze(1).squeeze(-1).unsqueeze(-1)
+        out = out * mask + image_as_patches * (1 - mask)
 
         out = self.folding_coreml(out, sizes)
 
@@ -258,22 +279,43 @@ class PositionalEncoding(nn.Module):
 
 
 class MobileOneCoarse(nn.Module):
-    def __init__(self, encoder_name, encoder_weights, in_channels, classes):
+    def __init__(self, variant='s4', **kwargs):
         super().__init__()
-        self.model = smp.Unet(
-            encoder_name=encoder_name,
-            encoder_weights=encoder_weights,
-            in_channels=in_channels,
-            classes=classes
-        )
-        
+        self.model = mobileone(variant=variant, **kwargs)
+
+        # Decoder
+        self.d4 = nn.ConvTranspose2d(2048, 1792, kernel_size=4, stride=2, padding=1)
+        self.d3 = nn.ConvTranspose2d(1792 + 1792, 896, kernel_size=4, stride=2, padding=1)
+        self.d2 = nn.ConvTranspose2d(896 + 896, 384, kernel_size=4, stride=2, padding=1)
+        self.d1 = nn.ConvTranspose2d(384 + 384, 64, kernel_size=4, stride=2, padding=1)
+        self.d0 = nn.ConvTranspose2d(64 + 64, 3, kernel_size=4, stride=2, padding=1)
+        self.relu = nn.ReLU(inplace=True)
+        self.sigmoid = nn.Sigmoid()
+
     def forward(self, x):
-        features = self.model.encoder(x) # Restored line
-        output_image = self.model.decoder(*features)
-        output_image = self.model.segmentation_head(output_image)
-        # Apply sigmoid to match the previous model's output activation
-        output_image = torch.sigmoid(output_image)
-        return output_image, features
+        features = []
+        x0 = self.model.stage0(x)
+        features.append(x0)
+        x1 = self.model.stage1(x0)
+        features.append(x1)
+        x2 = self.model.stage2(x1)
+        features.append(x2)
+        x3 = self.model.stage3(x2)
+        features.append(x3)
+        x4 = self.model.stage4(x3)
+        features.append(x4)
+
+        out = self.relu(self.d4(x4))
+        out = torch.cat([out, x3], dim=1)
+        out = self.relu(self.d3(out))
+        out = torch.cat([out, x2], dim=1)
+        out = self.relu(self.d2(out))
+        out = torch.cat([out, x1], dim=1)
+        out = self.relu(self.d1(out))
+        out = torch.cat([out, x0], dim=1)
+        out = self.sigmoid(self.d0(out))
+
+        return out, features
 
 
 class InpaintingModel(nn.Module):
@@ -292,10 +334,7 @@ if __name__ == '__main__':
         'coarse_model': {
             'class': 'MobileOneCoarse',
             'parameters': {
-                'encoder_name': 'mobileone_s4',
-                'encoder_weights': 'imagenet',
-                'in_channels': 3,
-                'classes': 3
+                'variant': 's4'
             }
         },
         'generator': {
@@ -305,18 +344,16 @@ if __name__ == '__main__':
                 'nheads': 1,
                 'stem_out_stride': 1,
                 'stem_out_channels': 3,
-                'initial_temperature_scaling': 1,
-                'final_temperature_scaling': 1,
                 'merge_mode': 'all',
                 'image_size': 512,
                 'embed_dim': 576,
                 'use_qpos': None,
                 'use_kpos': None,
                 'dropout': 0.1,
-                'feature_i': 3,
+                'feature_i': 2,
                 'concat_features': True,
                 'final_conv': True,
-                'feature_dim': 448,
+                'feature_dim': 896,
                 'attention_type': 'MultiHeadAttention',
                 'compute_v': False
             }
