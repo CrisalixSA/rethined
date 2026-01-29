@@ -132,51 +132,31 @@ class PatchInpainting(nn.Module):
 
         self.register_buffer(
             name="unfolding_weights",
-            tensor=self._compute_unfolding_weights(),
+            tensor=self._compute_unfolding_weights(self.kernel_size, self.stem_out_channels),
             persistent=False,
         )
         self.register_buffer(
             name="unfolding_weights_image",
-            tensor=self._compute_unfolding_weights_v2(),
+            tensor=self._compute_unfolding_weights(self.kernel_size, 3),
             persistent=False,
         )
         self.register_buffer(
             name="unfolding_weights_mask",
-            tensor=self._compute_unfolding_weights_v3(),
+            tensor=self._compute_unfolding_weights(self.kernel_size, 1),
             persistent=False,
         )
 
-    def _compute_unfolding_weights(self) -> torch.Tensor:
-        weights = torch.eye(self.kernel_size *
-                            self.kernel_size, dtype=torch.float)
+    def _compute_unfolding_weights(self, kernel_size, channels) -> torch.Tensor:
+        weights = torch.eye(kernel_size *
+                            kernel_size, dtype=torch.float)
         weights = weights.reshape(
-            (self.kernel_size * self.kernel_size,
-             1, self.kernel_size, self.kernel_size)
+            (kernel_size * kernel_size,
+             1, kernel_size, kernel_size)
         )
-        weights = weights.repeat(self.stem_out_channels, 1, 1, 1)
+        weights = weights.repeat(channels, 1, 1, 1)
         return weights
 
-    def _compute_unfolding_weights_v2(self) -> torch.Tensor:
-        weights = torch.eye(self.kernel_size *
-                            self.kernel_size, dtype=torch.float)
-        weights = weights.reshape(
-            (self.kernel_size * self.kernel_size,
-             1, self.kernel_size, self.kernel_size)
-        )
-        weights = weights.repeat(3, 1, 1, 1)
-        return weights
-
-    def _compute_unfolding_weights_v3(self) -> torch.Tensor:
-        weights = torch.eye(self.kernel_size *
-                            self.kernel_size, dtype=torch.float)
-        weights = weights.reshape(
-            (self.kernel_size * self.kernel_size,
-             1, self.kernel_size, self.kernel_size)
-        )
-        weights = weights.repeat(1, 1, 1, 1)
-        return weights
-
-    def unfolding_coreml(self, feature_map: torch.Tensor, weights):
+    def unfolding_coreml(self, feature_map: torch.Tensor, weights, kernel_size: int):
         # im2col is not implemented in Coreml, so here we hack its implementation using conv2d
         # we compute the weights
         batch_size, in_channels, img_h, img_w = feature_map.shape
@@ -184,23 +164,23 @@ class PatchInpainting(nn.Module):
             feature_map,
             weights,
             bias=None,
-            stride=(self.kernel_size, self.kernel_size),
+            stride=(kernel_size, kernel_size),
             padding=0,
             dilation=1,
             groups=in_channels,
         )
         return patches, (img_h, img_w)
 
-    def folding_coreml(self, patches: torch.Tensor, output_size) -> torch.Tensor:
+    def folding_coreml(self, patches: torch.Tensor, output_size, kernel_size: int, use_final_conv: bool) -> torch.Tensor:
         # col2im is not supported on coreml, so tracing fails
         # We hack folding function via pixel_shuffle to enable coreml tracing
-        if self.final_conv:
+        if use_final_conv and self.final_conv:
             patches = rearrange(patches, 'b (p1 p2) c -> b c p1 p2', p1=self.window_size, p2=self.window_size)
             patches = self.final_conv(patches)
             patches = rearrange(patches, 'b c p1 p2 -> b (p1 p2) c')
         final_image = rearrange(patches, 'b (h w) (c p1 p2) -> b c (h p1) (w p2)',
-                        h=self.image_size//self.kernel_size, w=self.image_size//self.kernel_size,
-                        p1=self.kernel_size, p2=self.kernel_size)
+                        h=output_size[0]//kernel_size, w=output_size[1]//kernel_size,
+                        p1=kernel_size, p2=kernel_size)
         return final_image
 
     def forward(self, image, mask):
@@ -213,10 +193,10 @@ class PatchInpainting(nn.Module):
         
         image_blurred = self.final_gaussian_blur(image)
         image_as_patches_blurred, _ = self.unfolding_coreml(
-            image_blurred, self.unfolding_weights)
+            image_blurred, self.unfolding_weights, self.kernel_size)
 
         image_as_patches, sizes = self.unfolding_coreml(
-            image, self.unfolding_weights)
+            image, self.unfolding_weights, self.kernel_size)
         
         image_as_patches = image_as_patches - image_as_patches_blurred
 
@@ -224,7 +204,7 @@ class PatchInpainting(nn.Module):
             image_as_patches.size(0), 1, 1).unsqueeze(2) if self.use_qpos else None
 
         mask_same_res_as_features_pooled, _ = self.unfolding_coreml(
-                mask, self.unfolding_weights_mask)
+                mask, self.unfolding_weights_mask, self.kernel_size)
         mask_same_res_as_features_pooled = mask_same_res_as_features_pooled[:, 0:1, :, :]
         mask_same_res_as_features_pooled = mask_same_res_as_features_pooled.flatten(
                 start_dim=2).unsqueeze(-1)
@@ -250,9 +230,10 @@ class PatchInpainting(nn.Module):
         mask = mask_same_res_as_features_pooled.squeeze(1).squeeze(-1).unsqueeze(-1)
         out = out * mask + image_as_patches * (1 - mask)
 
-        out = self.folding_coreml(out, sizes)
+        out = self.folding_coreml(out, sizes, self.kernel_size, use_final_conv=True)
 
-        return out, atten_weights[0], image_to_return
+
+        return out, atten_weights, image_to_return
 
     def merge_all_patches_sum(self, patch_scores, sequence_of_patches):
         return torch.einsum('bkhq,bchk->bchq', patch_scores, sequence_of_patches.unsqueeze(2)).squeeze(2)
@@ -318,6 +299,47 @@ class MobileOneCoarse(nn.Module):
         return out, features
 
 
+
+class AttentionUpscaling(nn.Module):
+    def __init__(self, patch_inpainting_module: "PatchInpainting"):
+        super().__init__()
+        self.patch_inpainting = patch_inpainting_module
+
+    def forward(self, x_hr, x_lr_inpainted, attn_map):
+        hr_h, hr_w = x_hr.shape[-2:]
+        lr_h, lr_w = x_lr_inpainted.shape[-2:]
+        
+        # Upsample the low-resolution inpainted image
+        x_hr_base = F.interpolate(x_lr_inpainted, size=(hr_h, hr_w), mode='bicubic', align_corners=False)
+
+        # High-frequency token mixing
+        hr_patch_size = self.patch_inpainting.kernel_size * (hr_h // lr_h)
+        
+        # Create HR patches
+        unfolding_weights_hr = self.patch_inpainting._compute_unfolding_weights(kernel_size=hr_patch_size, channels=x_hr.shape[1])
+        
+        hr_patches, _ = self.patch_inpainting.unfolding_coreml(x_hr, unfolding_weights_hr, hr_patch_size)
+        
+        # Create blurred HR patches
+        hr_blurred = self.patch_inpainting.final_gaussian_blur(x_hr)
+        hr_patches_blurred, _ = self.patch_inpainting.unfolding_coreml(hr_blurred, unfolding_weights_hr, hr_patch_size)
+        
+        # Compute HR high-frequency patches
+        hr_hf_patches = hr_patches - hr_patches_blurred
+        hr_hf_patches = hr_hf_patches.flatten(start_dim=2).transpose(1, 2)
+        
+        # Weighted sum of HR high-frequency patches
+        reconstructed_hr_hf_patches = torch.matmul(attn_map.squeeze(1), hr_hf_patches)
+        
+        # Fold the reconstructed patches
+        reconstructed_hr_hf_image = self.patch_inpainting.folding_coreml(reconstructed_hr_hf_patches, (hr_h, hr_w), kernel_size=hr_patch_size, use_final_conv=False)
+        
+        # Add high-frequency details to the upsampled LR image
+        final_hr_image = x_hr_base + reconstructed_hr_hf_image
+        
+        return final_hr_image
+
+
 class InpaintingModel(nn.Module):
     def __init__(self, config):
         super().__init__()
@@ -329,7 +351,9 @@ class InpaintingModel(nn.Module):
 
 
 if __name__ == '__main__':
-    # Dummy config based on train_default.conf, with model expecting 512x512 input
+    # The model is designed to work on a fixed low resolution (e.g., 512x512)
+    # as described in the paper. The high-resolution inpainting is achieved
+    # through a separate "Attention Upscaling" step which is not part of this model.
     config = {
         'coarse_model': {
             'class': 'MobileOneCoarse',
@@ -355,17 +379,21 @@ if __name__ == '__main__':
                 'final_conv': True,
                 'feature_dim': 896,
                 'attention_type': 'MultiHeadAttention',
-                'compute_v': False
+                'compute_v': False,
+                'use_argmax': False
             }
         }
     }
 
-    # Create a high-resolution dummy image and mask
-    high_res_image = torch.randn(1, 3, 2048, 2048)
-    high_res_mask = torch.zeros(1, 1, 2048, 2048)
-    high_res_mask[:, :, 1024:, 1024:] = 1
+    # Define the high-resolution image size
+    HR_IMAGE_SIZE = 2048
 
-    # Downsample inputs for the generator
+    # Create a high-resolution dummy image and mask
+    high_res_image = torch.randn(1, 3, HR_IMAGE_SIZE, HR_IMAGE_SIZE)
+    high_res_mask = torch.zeros(1, 1, HR_IMAGE_SIZE, HR_IMAGE_SIZE)
+    high_res_mask[:, :, HR_IMAGE_SIZE//2:, HR_IMAGE_SIZE//2:] = 1
+
+    # Downsample inputs for the generator, as described in the paper
     low_res_image = F.interpolate(high_res_image, size=512, mode='bicubic', antialias=True)
     low_res_mask = F.interpolate(high_res_mask, size=512)
     masked_low_res_image = low_res_image * (1 - low_res_mask)
@@ -376,7 +404,13 @@ if __name__ == '__main__':
     # Forward pass with the downsampled image
     output, attn_scores, temp_image = model(masked_low_res_image, low_res_mask)
 
-    # Check that the output shape is the expected low resolution
-    assert output.shape == (1, 3, 512, 512)
-    print("Model test passed on downsampled image!")
+    # The output of the model is at the low resolution (512x512)
+    print(f"Low resolution output shape: {output.shape}")
 
+    # Apply attention upscaling
+    attention_upscaler = AttentionUpscaling(model.generator)
+    final_output = attention_upscaler(high_res_image, output, attn_scores)
+    
+    print(f"Final high resolution output shape: {final_output.shape}")
+    assert final_output.shape == high_res_image.shape
+    print("Forward pass with attention upscaling completed successfully.")

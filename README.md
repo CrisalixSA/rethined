@@ -35,20 +35,6 @@ pip install -e .
 
 ---
 
-### Inference
-
-A basic test can be run directly from the `model.py` file. This test loads a sample configuration, creates a dummy high-resolution image, and runs the inpainting model on a downsampled version to verify the forward pass.
-
-```bash
-# Ensure your environment is activated
-source .venv/bin/activate
-
-# Run the model's internal test
-python model.py
-```
-
----
-
 ### Citation
 
 If you find this work useful for your research, please consider citing:
