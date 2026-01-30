@@ -68,12 +68,15 @@ If you find this work useful for your research, please consider citing:
 ---
 
 ## DF8K-Inpainting dataset
-We release the \emph{DF8K-Inpainting} dataset, a mix of DF2K and CAFHQ datasets, providing free-form inpainting masks only for the test set.
+We release the DF8K-Inpainting dataset, a mix of DF2K and CAFHQ datasets, providing free-form inpainting masks only for the test set.
 
-The CAFHQ dataset can be downloaded here: [https://github.com/owenzlz/SuperCAF](https://github.com/owenzlz/SuperCAF)
-The DF2K dataset can be downloaded here: [https://www.kaggle.com/datasets/anvu1204/df2kdata](https://www.kaggle.com/datasets/anvu1204/df2kdata)
+The CAFHQ dataset can be downloaded in it original [repository](https://github.com/owenzlz/SuperCAF)
+
+The DF2K dataset can be downloaded in [kaggle](https://www.kaggle.com/datasets/anvu1204/df2kdata)
 
 The masks generated only for the test set can be found here: [Google Drive](https://drive.google.com/file/d/1BzTVrzZ5Z4rKPPp0K5SO5fRe01Fs4dw5/view?usp=sharing)
+
+## Contact
 If you have any questions, please feel free to reach me out at `marcelosanchezortega@gmail.com`.
 
 ## Acknowledgments
@@ -83,3 +86,4 @@ If you have any questions, please feel free to reach me out at `marcelosanchezor
 * LPIPS metric is from [richzhang](https://github.com/richzhang/PerceptualSimilarity)
 * SSIM is from [Po-Hsun-Su](https://github.com/Po-Hsun-Su/pytorch-ssim)
 * FID is from [mseitzer](https://github.com/mseitzer/pytorch-fid)
+* CAFHQ dataset from [SuperCAF](https://github.com/owenzlz/SuperCAF)
